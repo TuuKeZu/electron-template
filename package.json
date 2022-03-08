@@ -1,0 +1,38 @@
+{
+  "name": "electron-updater-example",
+  "version": "0.1.6",
+  "main": "src\\main.js",
+  "description": "electron-updater example project",
+  "author": {
+    "name": "Tuukka Moilanen",
+    "email": "app@example.com",
+    "url": "https://example.com/"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder -w"
+  },
+  "dependencies": {
+    "electron-log": "^4.3.0",
+    "electron-updater": "^4.6.5"
+  },
+  "devDependencies": {
+    "electron": "^17.1.0",
+    "electron-builder": "^22.14.13"
+  },
+  "build": {
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "http://localhost/electron-auto-update/"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "verifyUpdateCodeSignature": false,
+      "publisherName": "Some Company - Stored in cert file",
+      "certificateFile": "./certs/test.pfx",
+      "certificatePassword": "pass"
+    }
+  }
+}
