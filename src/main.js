@@ -2,42 +2,18 @@
 // See LICENSE for details
 
 const {app, BrowserWindow, ipcMain} = require('electron');
+const { IsPackaged, isPackaged } = require('electron-is-packaged');
+
 const log = require('electron-log');
-const {autoUpdater} = require("electron-updater");
 const path = require('path');
 
 // Disable security warnings and set react app path on dev env
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = true;
 
-//-------------------------------------------------------------------
-// Logging
-//
-// THIS SECTION IS NOT REQUIRED
-//
-// This logging setup is not required for auto-updates to work,
-// but it sure makes debugging easier :)
-//-------------------------------------------------------------------
-
-autoUpdater.logger = log;
-autoUpdater.logger.transports.file.level = 'info';
 log.info('App starting...');
 
-//-------------------------------------------------------------------
-// Open a window that displays the version
-//
-// THIS SECTION IS NOT REQUIRED
-//
-// This isn't required for auto-updates to work, but it's easier
-// for the app to show a window than to have to click "About" to see
-// that updates are working.
-//-------------------------------------------------------------------
 
 const WINDOWS = {};
-
-function sendStatusToWindow(text) {
-    log.info(text);
-    win.webContents.send('message', text);
-}
 
 const createMainWindow = () => {
 
@@ -62,9 +38,103 @@ const createMainWindow = () => {
     });
 
     win.loadURL(path.join(app.getAppPath(), 'src', 'windows', 'main', 'index.html'));
+}
 
-    // win.webContents.send('version', app.getVersion());
-    // sendStatusToWindow('Initalized Message Port!');
+const createLoadingWindow = () => {
+
+    if(WINDOWS['LOADING'] != null){ return; }
+
+    const win = new BrowserWindow({
+        width: 350,
+        height: 450,
+        frame: null,
+        webPreferences: {
+            nodeIntegration: true,
+            preload: path.join(app.getAppPath(), 'src', 'windows', 'loading', 'preload.js')
+        },
+    });
+
+    WINDOWS['LOADING'] = win;
+
+
+    // win.webContents.openDevTools();
+
+    win.on('closed', () => {
+        WINDOWS['LOADING'] = null;
+    });
+
+    win.loadURL(path.join(app.getAppPath(), 'src', 'windows', 'loading', 'index.html'));
+}
+
+const InitializeUpdates = () => {
+
+    // Significally boost startup time by importing for AutoUpdater after the creation of loading-screen.
+    const {autoUpdater} = require("electron-updater");
+
+    autoUpdater.logger = log;
+    autoUpdater.logger.transports.file.level = 'info';
+
+    // Bypass AutoUpdater when in development enviroment
+    if(!isPackaged){
+        log.info('You are in development enviroment. AutoUpdate was successfully ignored');
+
+        setTimeout(() => {  
+            WINDOWS['LOADING'].close();
+            createMainWindow();
+            return;
+        }, 200);
+    }
+
+    // Check for updates
+    autoUpdater.checkForUpdatesAndNotify();
+
+    autoUpdater.on('checking-for-update', () => {
+        log.info('Looking for updates...');
+        WINDOWS['LOADING'].webContents.send('status:looking');
+    });
+    
+    autoUpdater.on('update-available', (info) => {
+        log.info('Update found...');
+        log.info(info);
+        WINDOWS['LOADING'].webContents.send('status:available');
+    });
+    
+    autoUpdater.on('update-not-available', (info) => {
+        log.info('No update available. Starting normally');
+
+        setTimeout(() => { 
+            WINDOWS['LOADING'].close();
+            createMainWindow();
+            return;
+        }, 2000);
+
+    });
+    
+    autoUpdater.on('error', (err) => {
+        log.info('Error occured with autoUpdater');
+        log.error(err);
+        WINDOWS['LOADING'].webContents.send('status:error', err);
+    });
+    
+    autoUpdater.on('download-progress', (progressObj) => {
+        WINDOWS['LOADING'].webContents.send('status:process', {
+            progress: progressObj.percent,
+            speed: progressObj.bytesPerSecond,
+            transfered: progressObj.transferred,
+            total: progressObj.total
+        });
+    });
+
+    autoUpdater.on('update-downloaded', (ev, info) => {
+        log.info('Restarting in 2000ms...');
+        log.info(info);
+
+        WINDOWS['LOADING'].webContents.send('status:restarting');
+        
+        setTimeout(() => {
+            autoUpdater.quitAndInstall();
+        }, 2000);
+    });
 }
 
 ipcMain.on('main:initialize', (event, args) => {
@@ -75,94 +145,18 @@ ipcMain.on('main:initialize', (event, args) => {
     event.returnValue = data;
 });
 
-autoUpdater.on('checking-for-update', () => {
-    log.info('Looking for updates...');
-    sendStatusToWindow('Checking for update...');
-});
-
-autoUpdater.on('update-available', (info) => {
-    log.info('Update found...');
-    log.info('info');
-    sendStatusToWindow('Update available.');
-});
-
-autoUpdater.on('update-not-available', (info) => {
-    log.info(info);
-    sendStatusToWindow('Update not available.');
-});
-
-autoUpdater.on('error', (err) => {
-    log.error(err);
-    sendStatusToWindow('Error in auto-updater. ' + err);
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-    let log_message = "Download speed: " + progressObj.bytesPerSecond;
-    log_message = log_message + ' - Downloaded ' + progressObj.percent + '%';
-    log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')';
-    log.info(log_message);
-    sendStatusToWindow(log_message);
-});
-
-
-autoUpdater.on('update-downloaded', (ev, info) => {
-  // Wait 5 seconds, then quit and install
-  // In your application, you don't need to wait 5 seconds.
-  // You could call autoUpdater.quitAndInstall(); immediately
-  // sendStatusToWindow('Update downloaded');
-
-  log.info('Restarting...');
-
-  autoUpdater.quitAndInstall();  
+ipcMain.on('loading:ready', () => {
+    InitializeUpdates();
 });
 
 app.on('ready', function() {
-    // Create the Menu
-    createMainWindow();
+    createLoadingWindow();
 });
 
 app.on('window-all-closed', () => {
   app.quit();
 });
 
-//
-// CHOOSE one of the following options for Auto updates
-//
-
-//-------------------------------------------------------------------
-// Auto updates - Option 1 - Simplest version
-//
-// This will immediately download an update, then install when the
-// app quits.
-//-------------------------------------------------------------------
 app.on('ready', function()  {
-  autoUpdater.checkForUpdatesAndNotify();
+    
 });
-
-//-------------------------------------------------------------------
-// Auto updates - Option 2 - More control
-//
-// For details about these events, see the Wiki:
-// https://github.com/electron-userland/electron-builder/wiki/Auto-Update#events
-//
-// The app doesn't need to listen to any events except `update-downloaded`
-//
-// Uncomment any of the below events to listen for them.  Also,
-// look in the previous section to see them being used.
-//-------------------------------------------------------------------
-// app.on('ready', function()  {
-//   autoUpdater.checkForUpdates();
-// });
-// autoUpdater.on('checking-for-update', () => {
-// })
-// autoUpdater.on('update-available', (info) => {
-// })
-// autoUpdater.on('update-not-available', (info) => {
-// })
-// autoUpdater.on('error', (err) => {
-// })
-// autoUpdater.on('download-progress', (progressObj) => {
-// })
-// autoUpdater.on('update-downloaded', (info) => {
-//   autoUpdater.quitAndInstall();
-// })
